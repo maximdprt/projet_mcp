@@ -1,0 +1,19 @@
+.venv/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+crm/*.sqlite3
+
+# Configs MCP locales (chemins absolus propres à la machine)
+.mcp.json
+.cursor/mcp.json
+
+# Divers
+*.sqlite3
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+~$*

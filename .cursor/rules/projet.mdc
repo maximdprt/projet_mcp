@@ -1,0 +1,15 @@
+---
+description: Règles du projet Vérif Fournisseur (MCP fiabilisé + CRM de test)
+alwaysApply: true
+---
+
+Lis CLAUDE.md à la racine avant toute modification : il décrit l'architecture et les invariants.
+
+Invariants à ne jamais casser :
+- Les règles de décision sont dans le code (verif_fournisseur/regles.py, verifications.py), jamais dans le prompt.
+- Une source qui ne répond pas ne produit jamais « AUCUNE_ALERTE_DETECTEE » (fail-closed).
+- Aucun outil MCP ne paie, n'envoie, ni ne modifie un IBAN ou un fournisseur.
+- Montants en Decimal, jamais en float.
+- Aucun nom de personne (dirigeant, mandataire) ne sort du serveur : listes blanches dans sources/.
+- Tout nouveau garde-fou = un test dans tests/. `python -m pytest` doit rester vert.
+- Code, noms et messages en français.

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vérif Fournisseur — garde-fou anti-fraude</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/interface/style.css">
+  <script src="/interface/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <!-- ======================================================= barre latérale -->
+    <aside class="barre" aria-label="Menu principal">
+      <div class="marque">
+        <span class="logo" aria-hidden="true"><span class="logo-carre"></span><span class="logo-rond"></span></span>
+        <div>
+          <div class="marque-nom">Vérif Fournisseur</div>
+          <div class="marque-sous">Garde-fou anti-fraude</div>
+        </div>
+      </div>
+
+      <nav class="onglets" id="onglets" aria-label="Navigation" hidden>
+        <a href="#analyser" data-page="analyser">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
+          <span>Analyser</span>
+        </a>
+        <a href="#jeu" data-page="jeu">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6"/><path d="M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21.5h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7 15h10"/></svg>
+          <span>Jeu de test</span>
+        </a>
+        <a href="#fournisseurs" data-page="fournisseurs">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M10 21v-4h4v4"/></svg>
+          <span>Fournisseurs</span>
+        </a>
+        <a href="#journal" data-page="journal">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+          <span>Journal</span>
+        </a>
+      </nav>
+
+      <div class="environnement">
+        <div class="environnement-titre">Environnement</div>
+        <span class="direct" id="indicateur-direct" title="Le SaaS suit le journal d'audit en continu"><i></i>Suivi en direct</span>
+        <span class="mode" id="mode-verif" hidden></span>
+        <span class="env-ligne"><i class="c-gris"></i>6 sources officielles</span>
+      </div>
+
+      <div class="utilisateur">
+        <span class="avatar" aria-hidden="true">A</span>
+        <div class="utilisateur-texte"><div class="utilisateur-nom">Administrateur</div><div class="utilisateur-role">Clé admin</div></div>
+        <button type="button" id="bouton-deconnexion" class="icone-bouton" aria-label="Déconnexion" title="Déconnexion">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ======================================================= contenu -->
+    <div class="contenu">
+      <div class="barre-haut">
+        <div>
+          <h1 id="titre-page">Vérif Fournisseur</h1>
+          <p id="sous-titre-page">Le garde-fou anti-fraude des factures, piloté par un serveur MCP.</p>
+        </div>
+        <div class="commandes" id="zone-session" hidden>
+          <button type="button" id="bouton-enregistrement" class="secondaire" title="Mode enregistrement : plein écran sans boutons (Échap pour sortir)">Plein écran</button>
+          <button type="button" id="bouton-reinitialiser" class="secondaire" title="Vide la boîte de réception (le référentiel et l'historique restent)">Réinitialiser</button>
+        </div>
+      </div>
+
+      <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+      <main>
+        <!-- Connexion : la clé n'est écrite nulle part dans le code, l'utilisateur la saisit -->
+        <section id="ecran-connexion" class="connexion">
+          <div class="carte connexion-carte">
+            <div class="connexion-formes" aria-hidden="true">
+              <span class="icone forme-rond c-vert"></span><span class="icone forme-triangle c-ambre"></span><span class="icone forme-carre c-rouge"></span>
+            </div>
+            <h2>Connexion</h2>
+            <p>Déposez une facture : le serveur MCP la vérifie dans 6 sources officielles et dans votre référentiel, puis
+              vous dit s'il faut <b>bloquer</b>, <b>contrôler</b> ou si <b>rien d'anormal</b> n'a été trouvé.</p>
+            <form id="formulaire-connexion" autocomplete="off">
+              <label for="champ-cle">Clé administrateur</label>
+              <div class="ligne-champ">
+                <input id="champ-cle" name="cle" type="password" required minlength="4" autocomplete="off" spellcheck="false">
+                <button type="submit">Se connecter</button>
+              </div>
+            </form>
+            <p class="aide">Valeur <code>CRM_CLE_ADMIN</code> du fichier <code>.env</code>. Elle reste dans cet onglet et disparaît à sa fermeture.</p>
+          </div>
+        </section>
+
+        <!-- ======================================================= page Analyser -->
+        <div class="page" id="page-analyser" data-page="analyser" hidden>
+          <section class="kpis" id="kpis" aria-label="Chiffres clés"></section>
+
+          <div class="espace">
+            <div class="colonne">
+              <section class="depot" id="zone-depot" tabindex="0" aria-label="Déposer une facture">
+                <span class="depot-icone" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+                </span>
+                <h2>Déposez une facture</h2>
+                <p>PDF, TXT ou JSON · 5 Mo maximum<br>ou glissez une facture du <a href="#jeu">jeu de test</a></p>
+                <div class="depot-actions">
+                  <button type="button" id="bouton-parcourir">Choisir un fichier</button>
+                  <button type="button" id="bouton-saisie" class="secondaire">Saisir à la main</button>
+                </div>
+                <input type="file" id="champ-fichier" accept=".pdf,.txt,.json,application/pdf,text/plain,application/json" hidden>
+                <label class="case"><input type="checkbox" id="case-auto"> Analyser automatiquement après lecture</label>
+              </section>
+
+              <section class="carte apercu" id="apercu" hidden aria-label="Ce que le CRM a lu"></section>
+
+              <section class="carte boite">
+                <div class="titre-section">
+                  <h2>Boîte de réception <span class="compteur" id="compteur-boite">0</span></h2>
+                </div>
+                <div class="boite-action"><button type="button" id="bouton-analyser-tout" class="pleine" disabled>Analyser les factures reçues</button></div>
+                <ol class="liste-boite" id="liste-boite"></ol>
+              </section>
+            </div>
+
+            <section class="carte scene" id="scene" aria-live="polite" aria-label="Analyse"></section>
+          </div>
+        </div>
+
+        <!-- ======================================================= page Jeu de test -->
+        <div class="page" id="page-jeu" data-page="jeu" hidden>
+          <section class="bandeau-page">
+            <div class="legende" aria-label="Répartition attendue">
+              <span class="pastille-legende"><span class="icone forme-carre c-rouge"></span>9 à bloquer</span>
+              <span class="pastille-legende"><span class="icone forme-triangle c-ambre"></span>5 à contrôler</span>
+              <span class="pastille-legende"><span class="icone forme-rond c-vert"></span>2 saines</span>
+            </div>
+            <div class="bandeau-actions">
+              <button type="button" id="bouton-demo-complete">Démo complète : déposer les 16 et analyser</button>
+            </div>
+          </section>
+          <div class="exemples" id="exemples"></div>
+        </div>
+
+        <!-- ======================================================= page Fournisseurs -->
+        <div class="page" id="page-fournisseurs" data-page="fournisseurs" hidden>
+          <section class="carte carte-tableau"><div class="tableau-defilant"><table class="tableau" id="tableau-fournisseurs"></table></div></section>
+        </div>
+
+        <!-- ======================================================= page Journal -->
+        <div class="page" id="page-journal" data-page="journal" hidden>
+          <section class="bandeau-page">
+            <div class="filtres" id="filtres-journal" role="group" aria-label="Filtrer le journal"></div>
+          </section>
+          <section class="carte"><ol class="journal" id="liste-journal"></ol></section>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
