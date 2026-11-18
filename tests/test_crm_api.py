@@ -1,7 +1,7 @@
-"""Interface web du CRM : un test par endpoint nouveau ou modifié, et les garde-fous de la page.
+"""API du CRM de démonstration : un test par endpoint et par garde-fou.
 
-L'interface ne décide rien : elle affiche ce que le MCP a enregistré et ce que le CRM autorise
-(`actions_possibles`). Le serveur revérifie chaque action (403 pour la clé du MCP, 409 selon le statut).
+Le CRM décide seul de ce qu'un humain peut faire (`actions_possibles`) et revérifie chaque action :
+403 pour la clé du MCP, 409 selon le statut de la facture.
 """
 
 import asyncio
@@ -11,8 +11,8 @@ import httpx
 import pytest
 
 from crm import app as crm_app
-from demo.harnais import base_temporaire, clients
-from verif_fournisseur import verifications as v
+from harnais import base_temporaire, clients
+from verif_fournisseur import outils as v
 
 ORDRE_CONTROLES = ["identifiants", "identite_entreprise", "nom_facture", "procedures_bodacc", "gel_des_avoirs",
                    "tva_vies", "adresse_facture", "montant_eur", "referentiel_crm"]
@@ -47,44 +47,19 @@ def traiter(facture_id):
     return asyncio.run(_run())
 
 
-# ------------------------------------------------------------------ GET /  et  /interface/*
+# ------------------------------------------------------------------ GET /
 
-def test_la_racine_ouvre_la_presentation():
-    r = requete("GET", "/", follow_redirects=False)
-    assert r.status_code == 307 and r.headers["location"] == "/diapos/"
-
-
-def test_page_servie_sans_cle_et_protegee_par_une_csp():
-    r = requete("GET", "/crm")
-    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
-    csp = r.headers["content-security-policy"]
-    assert "script-src 'self'" in csp and "connect-src 'self'" in csp and "frame-ancestors 'none'" in csp
-    assert "<script src=\"/interface/app.js" in r.text
-    assert "<script>" not in r.text                    # aucun script en ligne
-    assert "16 factures" not in r.text and "F01" not in r.text   # aucune donnée sans clé
-
-
-@pytest.mark.parametrize("fichier", ["index.html", "app.js", "style.css"])
-def test_aucune_cle_ecrite_dans_l_interface(fichier):
-    r = requete("GET", f"/interface/{fichier}")
-    assert r.status_code == 200
-    for cle in (crm_app.CLE_ADMIN, crm_app.CLE_MCP, "cle-admin-demo-a-changer", "cle-mcp-demo-a-changer"):
-        assert cle not in r.text
-
-
-def test_le_javascript_n_interprete_jamais_de_html_ni_de_float():
-    js = requete("GET", "/interface/app.js").text
-    assert not re.search(r"\.innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(", js)
-    assert not re.search(r"parseFloat|Number\(\s*f\.montant|toFixed", js)
-    assert "localStorage" not in js                    # la clé ne survit pas à la fermeture de l'onglet
+def test_la_racine_presente_le_crm_sans_donnees():
+    r = requete("GET", "/")
+    assert r.status_code == 200 and r.json()["documentation"] == "/docs"
+    assert "F01" not in r.text                         # aucune donnée sans clé
 
 
 # ------------------------------------------------------------------ GET /api/session
 
 def test_session_indique_le_role_de_la_cle():
-    mode = crm_app.MODE_PRESENTATION
-    assert admin("GET", "/api/session").json() == {"role": "admin", "peut_agir": True, "presentation": mode}
-    assert mcp("GET", "/api/session").json() == {"role": "mcp", "peut_agir": False, "presentation": mode}
+    assert admin("GET", "/api/session").json() == {"role": "admin", "peut_agir": True}
+    assert mcp("GET", "/api/session").json() == {"role": "mcp", "peut_agir": False}
     assert requete("GET", "/api/session").status_code == 401
     assert requete("GET", "/api/session", "mauvaise-cle").status_code == 401
 

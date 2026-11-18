@@ -8,10 +8,10 @@ from datetime import date
 
 from conftest import ADRESSE_OK, BO, FX, GELS, GEO, IBAN_OK, NOM, RE, SIRET, TVA, TVA_OK
 
-from verif_fournisseur import verifications as v
+from verif_fournisseur import outils as v
 from verif_fournisseur.sources import gels
-from verif_fournisseur.server import mcp
-from verif_fournisseur.simulation import ENTREPRISES
+from verif_fournisseur.mcp.serveur import mcp
+from verif_fournisseur.sources.simulation import ENTREPRISES
 
 AUJOURDHUI = date(2026, 11, 18)
 

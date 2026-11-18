@@ -5,7 +5,7 @@ avec le résultat attendu du MCP. Les tests et la démo « sans MCP / avec MCP �
 Toutes les entreprises sont fictives (sauf la DINUM) et n'existent qu'en mode simulation.
 """
 
-from verif_fournisseur.simulation import iban_fr
+from verif_fournisseur.sources.simulation import iban_fr
 
 IBAN_MERCIER = iban_fr("30004000031234567890143")
 IBAN_PIRATE_FR = iban_fr("16958000016543210987612")   # IBAN français valide, mais pas celui du fournisseur
@@ -30,9 +30,6 @@ FOURNISSEURS = [
     {"id": 6, "nom": "CABINET ROUSSEAU CONSEIL", "siret": "90678912800012", "tva": "FR68906789128",
      "iban_reference": iban_fr("13335000401234567890118"), "telephone_reference": "05 56 00 00 06",
      "adresse": "22 RUE SAINTE CATHERINE 33000 BORDEAUX"},
-    {"id": 7, "nom": "SON ET IMAGE DISTRIBUTION", "siret": "90789123800004", "tva": "FR56907891238",
-     "iban_reference": iban_fr("30004012341234567890199"), "telephone_reference": "01 46 00 00 07",
-     "adresse": "15 RUE DE SEVRES 92100 BOULOGNE-BILLANCOURT"},
 ]
 F = {f["id"]: f for f in FOURNISSEURS}
 
@@ -128,24 +125,3 @@ CHAMPS_PIEGES = {
     "F11": ["nom_emetteur"], "F13": ["adresse_emetteur"], "F14": ["nom_emetteur"], "F15": ["objet", "iban"],
     "F16": ["nom_emetteur"],
 }
-
-
-# Démo « commerce agentique » (pitch) : « Achète-moi le meilleur casque à réduction de bruit, 400 € max. »
-# L'agent trouve 3 offres ; avant de payer, chaque vendeur passe par le MCP. (offre, verdict attendu)
-PRODUIT_AGENT = "Casque à réduction de bruit — modèle ANC Pro (fictif)"
-OFFRES_AGENT = [
-    ({"cle": "revendeur", "boutique": "son-et-image.fr", "nom_emetteur": "SON ET IMAGE DISTRIBUTION",
-      "siret": "90789123800004", "tva": "FR56907891238", "iban": iban_fr("30004012341234567890199"),
-      "adresse_emetteur": "15 RUE DE SEVRES 92100 BOULOGNE-BILLANCOURT", "montant": "349.00",
-      "objet": PRODUIT_AGENT + " — revendeur agréé, garantie constructeur 2 ans",
-      "argument": "Revendeur agréé, prix du marché"}, "verifiee"),
-    ({"cle": "outlet", "boutique": "hightech-outlet.shop", "nom_emetteur": "HIGH TECH OUTLET",
-      "siret": "90891234800004", "tva": "FR29908912348", "iban": iban_fr("16958000016543210987612"),
-      "adresse_emetteur": "27 RUE OBERKAMPF 75011 PARIS", "montant": "229.00",
-      "objet": PRODUIT_AGENT + " — déstockage -35 %", "argument": "-35 %, boutique inconnue"}, "a_verifier_humain"),
-    ({"cle": "contrefacon", "boutique": "audio-premium-store.com", "nom_emetteur": "AUDIO PREMIUM STORE",
-      "siret": "90912345600013", "tva": "FR00909123456", "iban": "LT121000011101001000",
-      "adresse_emetteur": "1 RUE DU COMMERCE 75015 PARIS", "montant": "79.00",
-      "objet": PRODUIT_AGENT + " — 100 % ORIGINAL, -77 %, stock limité, paiement par virement uniquement",
-      "argument": "-77 %, « 100 % original »"}, "bloquee"),
-]

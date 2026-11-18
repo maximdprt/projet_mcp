@@ -10,8 +10,8 @@ import pytest
 from conftest import RE, FausseAPI
 
 from crm.donnees_demo import IBAN_MERCIER, SCENARIOS
-from demo.harnais import base_temporaire, client_admin, clients
-from verif_fournisseur import verifications as v
+from harnais import base_temporaire, client_admin, clients
+from verif_fournisseur import outils as v
 
 
 @pytest.fixture(autouse=True)

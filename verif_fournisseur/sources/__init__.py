@@ -20,7 +20,7 @@ def creer_client() -> httpx.AsyncClient:
     """Client HTTP vers les API externes. En mode simulation, les API sont simulées (aucun réseau)."""
     transport = None
     if config.MODE == "simulation":
-        from ..simulation import transport_simule
+        from .simulation import transport_simule
         transport = transport_simule()
     return httpx.AsyncClient(timeout=config.TIMEOUT_SECONDES, transport=transport,
                              headers={"User-Agent": config.USER_AGENT})
