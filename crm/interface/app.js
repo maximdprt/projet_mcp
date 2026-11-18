@@ -4,6 +4,8 @@
  * (protocole MCP, outil traiter_factures_crm) -> le MCP vérifie et écrit son verdict -> un humain décide.
  *
  * - Aucune clé dans ce fichier : l'utilisateur la saisit, elle est gardée dans l'onglet (sessionStorage).
+ *   Mode présentation (CRM_MODE_PRESENTATION=1, navigateur local) : le CRM accepte la page sans clé.
+ * - Page « Pitch » : les diapositives de l'oral (8 min), avec deux démos en direct branchées sur le vrai MCP.
  * - Aucune règle de décision ici : verdicts, alertes et messages viennent du MCP ; les actions possibles du CRM.
  *   L'interface ne fait qu'afficher (et relier chaque code d'alerte au champ de la facture qu'il concerne).
  * - Tout est affiché en texte (textContent) : une facture piégée ne peut rien injecter dans la page.
@@ -139,7 +141,8 @@ function ecrireSession(cle, v) { try { if (v === null) sessionStorage.removeItem
 class ErreurApi extends Error { constructor(statut, message) { super(message); this.statut = statut; } }
 
 async function appelApi(methode, chemin, { json, formulaire } = {}) {
-  const entetes = { "X-API-Key": etat.cle || "" };
+  const entetes = { "X-Presentation": "1" };            // en-tête personnalisé : le CRM refuse les autres sites
+  if (etat.cle) entetes["X-API-Key"] = etat.cle;
   let corps;
   if (json !== undefined) { entetes["Content-Type"] = "application/json"; corps = JSON.stringify(json); }
   if (formulaire) corps = formulaire;
@@ -151,7 +154,7 @@ async function appelApi(methode, chemin, { json, formulaire } = {}) {
   if (!reponse.ok) {
     let detail = donnees && donnees.detail;
     if (Array.isArray(detail)) detail = detail.map((d) => `${(d.loc || []).slice(-1)[0] || "champ"} : ${d.msg}`).join(" ; ");
-    if (reponse.status === 401) deconnecter("Clé refusée par le CRM. Saisissez-la à nouveau.");
+    if (reponse.status === 401) deconnecter(etat.cle ? "Clé refusée par le CRM. Saisissez-la à nouveau." : null);
     throw new ErreurApi(reponse.status, `Refusé par le CRM (HTTP ${reponse.status}) — ${detail || "erreur"}`);
   }
   return donnees;
@@ -172,7 +175,10 @@ async function connecter(cle) {
   etat.cle = cle;
   const session = await appelApi("GET", "/api/session");
   etat.role = session.role;
-  ecrireSession(CLE_STOCKAGE, cle);
+  ecrireSession(CLE_STOCKAGE, cle || null);
+  const presentation = !cle && session.presentation;
+  document.body.classList.toggle("presentation", presentation);
+  $("utilisateur-role").textContent = presentation ? "Mode présentation · accès local" : "Clé admin";
   $("champ-cle").value = "";
   document.body.classList.add("connecte");
   $("ecran-connexion").hidden = true;
@@ -181,7 +187,7 @@ async function connecter(cle) {
   $("bouton-reinitialiser").disabled = !session.peut_agir;
   $("case-auto").checked = lireSession(AUTO_STOCKAGE) === "1";
   await chargerTout();
-  allerA(location.hash.slice(1) || "analyser");
+  allerA(location.hash.slice(1) || "pitch");
   demarrerSuivi();
 }
 
@@ -200,6 +206,7 @@ function deconnecter(message) {
 }
 
 const TITRES_PAGES = {
+  pitch: ["Pitch", "Les diapositives de l'oral."],
   analyser: ["Analyser une facture", "Déposez une facture : le serveur MCP la vérifie dans 6 sources officielles et dans votre référentiel."],
   jeu: ["Jeu de test", "14 arnaques réelles de la fraude fournisseur et 2 factures saines, en PDF fictifs. Glissez une carte dans la zone de dépôt, déposez-la d'un clic, ou lancez la démo complète."],
   fournisseurs: ["Référentiel fournisseurs", "Ce que le MCP compare à chaque facture : SIRET, IBAN enregistré, historique. En cas de doute, on contre-appelle au numéro du référentiel, jamais à celui de la facture."],
@@ -207,7 +214,7 @@ const TITRES_PAGES = {
 };
 
 function allerA(page) {
-  if (!["analyser", "jeu", "fournisseurs", "journal"].includes(page)) page = "analyser";
+  if (!["pitch", "analyser", "jeu", "fournisseurs", "journal"].includes(page)) page = "pitch";
   etat.page = page;
   $("titre-page").textContent = TITRES_PAGES[page][0];
   $("sous-titre-page").textContent = TITRES_PAGES[page][1];
@@ -215,6 +222,8 @@ function allerA(page) {
   document.querySelectorAll("#onglets a").forEach((a) => {
     if (a.dataset.page === page) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   });
+  document.body.classList.toggle("page-pitch", page === "pitch");
+  if (page === "pitch") afficherDiapo(pitch.index);
   if (page === "jeu") afficherExemples();
   if (page === "fournisseurs") afficherFournisseurs();
   if (page === "journal") afficherJournal();
@@ -291,7 +300,7 @@ function afficherMode(entree) {
 function demarrerSuivi() {
   arreterSuivi();
   etat.minuteurSuivi = setInterval(async () => {
-    if (document.hidden || !etat.cle) return;
+    if (document.hidden || !etat.role) return;
     try { await suivre(); $("indicateur-direct").classList.remove("arret"); }
     catch { $("indicateur-direct").classList.add("arret"); }
   }, INTERVALLE_SUIVI_MS);
@@ -352,6 +361,7 @@ async function jouer(e) {
   const f = etat.factures.get(e.facture_id);
   afficherMode(e);
   if (!f) { noterEvenement(e); return; }
+  if (etat.page !== "analyser") { noterEvenement(e); afficherKpis(false); return; }   // scène cachée : pas d'animation
   etat.focus = f.id;
   etat.enAnalyse.add(f.id);                 // pendant l'animation, la facture est montrée « en analyse »
   afficherBoite();
@@ -843,16 +853,24 @@ async function demoComplete() {
   }
   clearTimeout(minuteurDemo);
   bouton.classList.remove("confirmer"); bouton.disabled = true; bouton.textContent = "Dépôt des factures…";
-  try {
-    interrompre(); etat.file = []; await attendreFinLecture();
-    await appelApi("POST", "/api/demo/reinitialiser?jeu_de_test=false");
-    await chargerTout();
-    allerA("analyser");
-    for (const x of etat.exemples) await deposerExemple(x.id, { analyser: false });
-    await appelApi("POST", "/api/analyses");
-    afficherMessage("Les 16 factures sont déposées : le MCP les analyse.", "ok");
-  } catch (e) { afficherMessage(e.message, "erreur"); }
+  try { await executerDemoComplete(); }
+  catch (e) { afficherMessage(e.message, "erreur"); }
   finally { bouton.disabled = false; bouton.textContent = "Démo complète : déposer les 16 et analyser"; }
+}
+
+async function viderBoite() {
+  interrompre(); etat.file = []; await attendreFinLecture();
+  await appelApi("POST", "/api/demo/reinitialiser?jeu_de_test=false");
+  etat.apercu = null; afficherApercu();
+  await chargerTout();
+}
+
+async function executerDemoComplete() {
+  await viderBoite();
+  allerA("analyser");
+  for (const x of etat.exemples) await deposerExemple(x.id, { analyser: false });
+  await appelApi("POST", "/api/analyses");
+  afficherMessage("Les 16 factures sont déposées : le MCP les analyse.", "ok");
 }
 
 // ------------------------------------------------------------------ pages Fournisseurs et Journal
@@ -962,6 +980,191 @@ function brancherDepot() {
   $("case-auto").addEventListener("change", (e) => ecrireSession(AUTO_STOCKAGE, e.target.checked ? "1" : "0"));
 }
 
+// ------------------------------------------------------------------ pitch : diapositives
+
+const DUREE_PITCH_S = 8 * 60;
+const pitch = { index: 0, debut: null, minuteur: null };
+const diapos = () => [...document.querySelectorAll("#diapos .diapo")];
+
+function afficherDiapo(i) {
+  const liste = diapos();
+  if (!liste.length) return;
+  pitch.index = Math.max(0, Math.min(liste.length - 1, i));
+  liste.forEach((d, n) => { d.classList.toggle("active", n === pitch.index); d.setAttribute("aria-hidden", n === pitch.index ? "false" : "true"); });
+  const d = liste[pitch.index];
+  $("diapo-compteur").textContent = `${pitch.index + 1} / ${liste.length}`;
+  $("diapo-titre").textContent = d.dataset.titre || "";
+  $("diapo-temps").textContent = d.dataset.temps || "";
+  $("diapo-progression").style.width = `${((pitch.index + 1) / liste.length) * 100}%`;
+  const notes = d.querySelector(".notes");
+  $("zone-notes").textContent = notes ? notes.textContent.trim() : "";
+  $("diapo-prec").disabled = pitch.index === 0;
+  $("diapo-suiv").disabled = pitch.index === liste.length - 1;
+  ecrireSession("crm_diapo", String(pitch.index));
+}
+function changerDiapo(delta) {
+  if (delta > 0 && !pitch.debut) basculerChrono();
+  afficherDiapo(pitch.index + delta);
+}
+function majChrono() {
+  const s = pitch.debut ? Math.floor((Date.now() - pitch.debut) / 1000) : 0;
+  const b = $("pitch-chrono");
+  b.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} / 8:00`;
+  b.classList.toggle("depasse", s > DUREE_PITCH_S);
+}
+function basculerChrono() {
+  clearInterval(pitch.minuteur);
+  if (pitch.debut) { pitch.debut = null; pitch.minuteur = null; }
+  else { pitch.debut = Date.now(); pitch.minuteur = setInterval(majChrono, 1000); }
+  majChrono();
+}
+function basculerNotes() {
+  const z = $("zone-notes");
+  z.hidden = !z.hidden;
+  $("pitch-notes").setAttribute("aria-pressed", z.hidden ? "false" : "true");
+}
+
+async function lancerDemoPitch(bouton) {
+  const cible = bouton.dataset.demo;
+  bouton.disabled = true;
+  try {
+    if (cible === "tout") await executerDemoComplete();
+    else { await viderBoite(); allerA("analyser"); await deposerExemple(cible); }
+  } catch (e) { afficherMessage(e.message, "erreur"); }
+  finally { bouton.disabled = false; }
+}
+
+// ------------------------------------------------------------------ pitch : l'agent d'achat (commerce agentique)
+
+const agent = { offres: [], produit: "", minuteur: null, debut: 0 };
+const ORDRE_NIVEAUX = { BLOQUANT: 0, A_VERIFIER: 1, INFO: 2 };
+
+function raisonsOffre(f) {
+  const v = f && f.derniere_verification;
+  const alertes = v && Array.isArray(v.alertes) ? v.alertes : [];
+  return alertes.filter((a) => a.niveau !== "INFO")
+    .sort((a, b) => (ORDRE_NIVEAUX[a.niveau] ?? 3) - (ORDRE_NIVEAUX[b.niveau] ?? 3))
+    .slice(0, 3).map((a) => ({ niveau: connu(NIVEAUX, a.niveau) ? a.niveau : "INFO", texte: connu(CODES, a.code) ? CODES[a.code][0] : a.code }));
+}
+const statutOffre = (o) => (o.facture ? o.facture.statut : "recue");
+const parPrix = (a, b) => { const x = centimes(a.montant) ?? 0n, y = centimes(b.montant) ?? 0n; return x < y ? -1 : x > y ? 1 : 0; };
+
+function afficherOffres() {
+  const offres = agent.offres.slice().sort(parPrix);
+  $("agent-offres").replaceChildren(...offres.map((o, i) => {
+    const s = statutOffre(o);
+    const enCours = s === "recue";
+    const raisons = enCours ? [] : raisonsOffre(o.facture);
+    return el("article", { class: `offre ${enCours ? "c-indigo" : classe(s)}` },
+      el("div", { class: "offre-haut" }, el("span", { class: "offre-boutique" }, o.boutique), i === 0 ? el("span", { class: "offre-rang" }, "le moins cher") : null),
+      el("div", { class: "offre-prix" }, formaterMontant(o.montant, "EUR")),
+      el("div", { class: "offre-argument" }, o.argument),
+      el("div", { class: "offre-vendeur" }, o.nom_emetteur),
+      enCours ? badgeAnalyse() : badgeVerdict(s),
+      el("ul", { class: "offre-raisons" }, enCours
+        ? [el("li", { class: "c-INFO" }, "SIRET, TVA, IBAN, sanctions, procédures, ancienneté…")]
+        : raisons.length ? raisons.map((r) => el("li", { class: `c-${r.niveau}` }, icone(FORMES_NIVEAU[r.niveau]), r.texte))
+          : [el("li", { class: "c-OK" }, icone("rond"), "Aucune alerte dans les sources officielles")]),
+      enCours ? null : el("button", { type: "button", class: "lien-detail", onclick: () => voirDetail(o.facture_id) }, "Voir l'analyse du MCP →"));
+  }));
+}
+
+function voirDetail(id) {
+  if (!etat.factures.has(id)) return;
+  etat.focus = id;
+  allerA("analyser");
+  afficherBoite(); afficherScene();
+}
+
+function afficherDecisionAgent() {
+  const offres = agent.offres.slice().sort(parPrix);
+  const sures = offres.filter((o) => statutOffre(o) === "verifiee");
+  const moinsCher = offres[0];
+  const z = $("agent-decision");
+  const contenu = [];
+  if (sures.length) {
+    const choix = sures[0];
+    const paye = choix.facture && choix.facture.statut === "payee";
+    contenu.push(el("div", { class: "decision-choix c-verifiee" }, icone("rond"),
+      el("span", {}, el("b", {}, `L'agent propose : ${choix.boutique}, ${formaterMontant(choix.montant, "EUR")}.`),
+        paye ? " Achat confirmé par l'utilisateur (paiement simulé)." : " Le paiement attend votre confirmation."),
+      paye ? null : el("button", { type: "button", class: "vert petit", onclick: (e) => confirmerAchat(e.currentTarget, choix) }, "Confirmer l'achat (simulé)")));
+  } else {
+    contenu.push(el("div", { class: "decision-choix c-a_verifier_humain" }, icone("triangle"), el("b", {}, "Aucune offre sans alerte : l'agent demande à l'humain.")));
+  }
+  if (moinsCher && statutOffre(moinsCher) !== "verifiee") {
+    contenu.push(el("p", { class: "decision-sans" },
+      `Sans MCP, l'agent aurait pris l'offre la moins chère : ${formaterMontant(moinsCher.montant, "EUR")} envoyés à ${moinsCher.boutique}, ` +
+      `verdict « ${verdict(statutOffre(moinsCher)).titre.toLowerCase()} ».`));
+  }
+  z.replaceChildren(...contenu);
+  z.hidden = false;
+}
+
+async function confirmerAchat(bouton, offre) {
+  bouton.disabled = true;
+  try {
+    await appelApi("POST", `/api/factures/${encodeURIComponent(offre.facture_id)}/paiement`);
+    offre.facture = await appelApi("GET", `/api/factures/${encodeURIComponent(offre.facture_id)}`);
+    afficherOffres(); afficherDecisionAgent();
+  } catch (e) { afficherMessage(e.message, "erreur"); bouton.disabled = false; }
+}
+
+async function lancerAgent() {
+  const b = $("bouton-agent");
+  b.disabled = true; b.textContent = "L'agent fait vérifier les vendeurs…";
+  $("agent-decision").hidden = true;
+  try {
+    const r = await appelApi("POST", "/api/demo/agent-achat");
+    agent.offres = r.offres; agent.produit = r.produit; agent.debut = Date.now();
+    $("agent-message").textContent = `3 offres trouvées pour « ${r.produit} ». Avant de payer, j'appelle l'outil MCP traiter_factures_crm pour chaque vendeur.`;
+    afficherOffres(); suivreAgent();
+  } catch (e) { afficherMessage(e.message, "erreur"); b.disabled = false; b.textContent = "Lancer l'agent d'achat"; }
+}
+
+function suivreAgent() {
+  clearInterval(agent.minuteur);
+  agent.minuteur = setInterval(async () => {
+    try {
+      const factures = await Promise.all(agent.offres.map((o) => appelApi("GET", `/api/factures/${encodeURIComponent(o.facture_id)}`)));
+      factures.forEach((f, i) => { agent.offres[i].facture = f; });
+      afficherOffres();
+      const fini = factures.every((f) => f.statut !== "recue");
+      if (fini || Date.now() - agent.debut > 90000) {
+        clearInterval(agent.minuteur); agent.minuteur = null;
+        if (fini) afficherDecisionAgent(); else afficherMessage("Le MCP n'a pas répondu à temps : rien n'est conclu, rien n'est payé.", "erreur");
+        const b = $("bouton-agent"); b.disabled = false; b.textContent = "Relancer l'agent";
+      }
+    } catch { /* nouvel essai au prochain tour */ }
+  }, 900);
+}
+
+function brancherPitch() {
+  $("diapo-prec").addEventListener("click", () => changerDiapo(-1));
+  $("diapo-suiv").addEventListener("click", () => changerDiapo(1));
+  $("pitch-chrono").addEventListener("click", basculerChrono);
+  $("pitch-notes").addEventListener("click", basculerNotes);
+  $("pitch-plein-ecran").addEventListener("click", basculerEnregistrement);
+  $("bouton-retour-pitch").addEventListener("click", () => { location.hash = "pitch"; allerA("pitch"); });
+  $("bouton-agent").addEventListener("click", lancerAgent);
+  document.querySelectorAll("[data-demo]").forEach((b) => b.addEventListener("click", () => lancerDemoPitch(b)));
+  const demande = Number(new URLSearchParams(location.search).get("diapo"));     // lien direct : /?diapo=9#pitch
+  const memorise = Number(lireSession("crm_diapo"));
+  pitch.index = Number.isInteger(demande) && demande > 0 ? demande - 1 : Number.isInteger(memorise) ? memorise : 0;
+  majChrono();
+  document.addEventListener("keydown", (e) => {
+    if (etat.page !== "pitch" || !document.body.classList.contains("connecte")) return;
+    if (e.altKey || e.ctrlKey || e.metaKey || (e.target.closest && e.target.closest("input, textarea, select"))) return;
+    const touche = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (["ArrowRight", "PageDown", " "].includes(touche)) { e.preventDefault(); changerDiapo(1); }
+    else if (["ArrowLeft", "PageUp"].includes(touche)) { e.preventDefault(); changerDiapo(-1); }
+    else if (touche === "Home") afficherDiapo(0);
+    else if (touche === "End") afficherDiapo(diapos().length - 1);
+    else if (touche === "f") basculerEnregistrement();
+    else if (touche === "n") basculerNotes();
+  });
+}
+
 // ------------------------------------------------------------------ démarrage
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -982,9 +1185,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("bouton-demo-complete").addEventListener("click", demoComplete);
   brancherDepot();
-  window.addEventListener("hashchange", () => { if (etat.cle) allerA(location.hash.slice(1)); });
+  brancherPitch();
+  window.addEventListener("hashchange", () => { if (etat.role) allerA(location.hash.slice(1)); });
   document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) document.body.classList.remove("enregistrement"); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") quitterEnregistrement(); });
-  const cle = lireSession(CLE_STOCKAGE);
-  if (cle) connecter(cle).catch((e) => { if (e.statut !== 401) afficherMessage(e.message, "erreur"); });
+  // clé mémorisée dans l'onglet, sinon mode présentation (sans clé) ; à défaut, l'écran de connexion reste affiché
+  connecter(lireSession(CLE_STOCKAGE) || null).catch((e) => { if (e.statut !== 401) afficherMessage(e.message, "erreur"); });
 });

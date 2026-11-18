@@ -49,12 +49,17 @@ def traiter(facture_id):
 
 # ------------------------------------------------------------------ GET /  et  /interface/*
 
+def test_la_racine_ouvre_la_presentation():
+    r = requete("GET", "/", follow_redirects=False)
+    assert r.status_code == 307 and r.headers["location"] == "/diapos/"
+
+
 def test_page_servie_sans_cle_et_protegee_par_une_csp():
-    r = requete("GET", "/")
+    r = requete("GET", "/crm")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
     csp = r.headers["content-security-policy"]
     assert "script-src 'self'" in csp and "connect-src 'self'" in csp and "frame-ancestors 'none'" in csp
-    assert "<script src=\"/interface/app.js\"" in r.text
+    assert "<script src=\"/interface/app.js" in r.text
     assert "<script>" not in r.text                    # aucun script en ligne
     assert "16 factures" not in r.text and "F01" not in r.text   # aucune donnée sans clé
 
@@ -77,8 +82,9 @@ def test_le_javascript_n_interprete_jamais_de_html_ni_de_float():
 # ------------------------------------------------------------------ GET /api/session
 
 def test_session_indique_le_role_de_la_cle():
-    assert admin("GET", "/api/session").json() == {"role": "admin", "peut_agir": True}
-    assert mcp("GET", "/api/session").json() == {"role": "mcp", "peut_agir": False}
+    mode = crm_app.MODE_PRESENTATION
+    assert admin("GET", "/api/session").json() == {"role": "admin", "peut_agir": True, "presentation": mode}
+    assert mcp("GET", "/api/session").json() == {"role": "mcp", "peut_agir": False, "presentation": mode}
     assert requete("GET", "/api/session").status_code == 401
     assert requete("GET", "/api/session", "mauvaise-cle").status_code == 401
 

@@ -12,6 +12,10 @@ Parcours : dépôt d'un fichier (extraction.py) -> enregistrement et rattachemen
 -> analyse : le CRM appelle le serveur MCP par le protocole MCP (analyse.py) ; c'est le MCP qui lit la facture,
 interroge les sources, applique les règles et écrit le verdict -> décision humaine (validation, paiement simulé).
 
+Mode présentation (CRM_MODE_PRESENTATION=1, pour l'oral) : un navigateur de CETTE machine (127.0.0.1) qui envoie
+l'en-tête X-Presentation agit comme administrateur sans saisir de clé. L'en-tête personnalisé force une requête
+CORS préalable : un autre site ouvert dans le navigateur ne peut pas s'en servir. La clé du MCP reste limitée (403).
+
 L'interface web (crm/interface/) ne contient aucune clé : elle la demande à l'utilisateur, la garde dans
 l'onglet (sessionStorage) et n'appelle que l'API ci-dessous. Elle ne décide rien : les actions possibles
 sont calculées ici (`actions_possibles`) et le serveur revérifie tout à chaque appel.
@@ -29,8 +33,8 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -39,6 +43,8 @@ from . import analyse, db, extraction, ingestion
 load_dotenv()
 CLE_MCP = os.getenv("CRM_CLE_MCP", "cle-mcp-demo-a-changer").strip()
 CLE_ADMIN = os.getenv("CRM_CLE_ADMIN", "cle-admin-demo-a-changer").strip()
+MODE_PRESENTATION = os.getenv("CRM_MODE_PRESENTATION", "0").strip() == "1"
+HOTES_LOCAUX = {"127.0.0.1", "::1"}
 
 
 def verifier_cles(cle_mcp: str, cle_admin: str) -> None:
@@ -53,6 +59,7 @@ def verifier_cles(cle_mcp: str, cle_admin: str) -> None:
 verifier_cles(CLE_MCP, CLE_ADMIN)
 
 DOSSIER_INTERFACE = Path(__file__).with_name("interface")
+DOSSIER_DIAPOS = Path(__file__).resolve().parents[1] / "diapos"   # présentation de l'oral (6 slides)
 
 # Règles du CRM lui-même (pas des règles de vérification : celles-ci restent dans verif_fournisseur/regles.py)
 STATUT_PAYABLE = "verifiee"              # seul statut qui autorise le paiement
@@ -72,11 +79,20 @@ async def _cycle_de_vie(_app):
 app = FastAPI(title="CRM de test — Vérif Fournisseur", version="1.0.0", lifespan=_cycle_de_vie)
 
 
-def role(x_api_key: str | None = Header(default=None)) -> str:
+def _presentation_locale(request: Request, x_presentation: str | None) -> bool:
+    """Mode présentation : navigateur local uniquement, avec l'en-tête X-Presentation (anti-CSRF)."""
+    return (MODE_PRESENTATION and x_presentation == "1" and request.client is not None
+            and request.client.host in HOTES_LOCAUX)
+
+
+def role(request: Request, x_api_key: str | None = Header(default=None),
+         x_presentation: str | None = Header(default=None)) -> str:
     if x_api_key == CLE_ADMIN:
         return "admin"
     if x_api_key == CLE_MCP:
-        return "mcp"
+        return "mcp"          # une clé MCP reste une clé MCP, même en mode présentation
+    if not x_api_key and _presentation_locale(request, x_presentation):
+        return "admin"
     raise HTTPException(401, "Clé API absente ou invalide (en-tête X-API-Key).")
 
 
@@ -110,7 +126,7 @@ def _avec_actions(f: dict) -> dict:
 @app.get("/api/session")
 def session(r: str = Depends(role)) -> dict:
     """Rôle associé à la clé fournie : l'interface s'en sert pour vérifier la clé saisie."""
-    return {"role": r, "peut_agir": r == "admin"}
+    return {"role": r, "peut_agir": r == "admin", "presentation": MODE_PRESENTATION}
 
 
 @app.get("/api/synthese")
@@ -392,6 +408,38 @@ def reinitialiser(jeu_de_test: bool = True, _: str = Depends(admin)) -> dict:
     return {"reinitialise": True, "jeu_de_test": jeu_de_test}
 
 
+@app.post("/api/demo/agent-achat", status_code=202)
+def agent_achat(taches: BackgroundTasks, qui: str = Depends(admin)) -> dict:
+    """Démo « commerce agentique » : un agent IA doit acheter un casque. Il a trouvé 3 offres ; chaque vendeur
+    est enregistré comme une commande à payer (« recue ») puis vérifié par le MCP avant tout paiement."""
+    from .donnees_demo import FOURNISSEURS, OFFRES_AGENT, PRODUIT_AGENT
+    suffixe = time.strftime("%H%M%S")
+    offres = []
+    with db.connexion() as c:
+        for f in FOURNISSEURS:   # base créée avant l'ajout du revendeur au référentiel : on le complète
+            c.execute("INSERT OR IGNORE INTO fournisseurs VALUES (:id,:nom,:siret,:tva,:iban_reference,"
+                      ":telephone_reference,:adresse)", f)
+        for o, attendu in OFFRES_AGENT:
+            fournisseur_id, mode = ingestion.rattacher(c, o["nom_emetteur"], o["siret"])
+            facture_id = ingestion.nouvel_identifiant(c)
+            numero = f"CMD-{o['cle'][:4].upper()}-{suffixe}"
+            c.execute("INSERT INTO factures (id, numero, fournisseur_id, nom_emetteur, siret, tva, iban, adresse_emetteur, "
+                      "montant, devise, date_emission, objet, statut, source) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,'EUR',?,?,'recue','depot')",
+                      (facture_id, numero, fournisseur_id, o["nom_emetteur"], o["siret"], o["tva"], o["iban"],
+                       o["adresse_emetteur"], o["montant"], time.strftime("%Y-%m-%d"), o["objet"]))
+            _journal(c, facture_id, "agent_ia", "depot", "recue",
+                     {"fichier": f"commande {o['boutique']}", "fournisseur_id": fournisseur_id, "rattachement": mode,
+                      "origine": "agent d'achat"})
+            _journal(c, facture_id, qui, "analyse_demandee", None,
+                     {"outil": analyse.OUTIL, "arguments": {"facture_id": facture_id}, "transport": "stdio (protocole MCP)"})
+            offres.append({"facture_id": facture_id, "boutique": o["boutique"], "nom_emetteur": o["nom_emetteur"],
+                           "montant": o["montant"], "argument": o["argument"], "statut_attendu": attendu})
+    for o in offres:
+        taches.add_task(_faire_analyser, {"facture_id": o["facture_id"]}, o["facture_id"])
+    return {"produit": PRODUIT_AGENT, "offres": offres}
+
+
 # ------------------------------------------------------------------ factures d'exemple (fictives, publiques)
 
 def _exemple(exemple_id: str):
@@ -434,10 +482,27 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
 
 
 @app.get("/", include_in_schema=False)
+def accueil() -> RedirectResponse:
+    """L'adresse racine ouvre la présentation de l'oral ; le SaaS reste disponible sur /crm."""
+    return RedirectResponse("/diapos/")
+
+
+@app.get("/crm", include_in_schema=False)
 def interface() -> FileResponse:
     return FileResponse(DOSSIER_INTERFACE / "index.html", media_type="text/html",
                         headers={"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
                                  "Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
 
 
+@app.middleware("http")
+async def _sans_cache_interface(request: Request, call_next):
+    """Les fichiers de l'interface sont revalidés à chaque chargement : jamais d'ancienne version en cache."""
+    reponse = await call_next(request)
+    if request.url.path.startswith(("/interface/", "/diapos")):
+        reponse.headers["Cache-Control"] = "no-cache"
+    return reponse
+
+
 app.mount("/interface", StaticFiles(directory=DOSSIER_INTERFACE), name="interface")
+DOSSIER_DIAPOS.mkdir(exist_ok=True)
+app.mount("/diapos", StaticFiles(directory=DOSSIER_DIAPOS, html=True), name="diapos")

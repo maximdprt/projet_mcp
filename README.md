@@ -11,6 +11,12 @@ piégées : fraude au RIB, usurpation, liquidation, gel des avoirs, doublon, inj
 | `VERIFICATION_HUMAINE_REQUISE` | `a_verifier_humain` | un signal demande un contrôle humain |
 | `AUCUNE_ALERTE_DETECTEE` | `verifiee` | rien d'anormal dans les sources (ce qui ne veut pas dire « fiable ») |
 
+## Ouvrir les slides de l'oral
+
+**Double-clic sur `OUVRIR_LES_SLIDES.cmd`** (ou ouvrir `diapos/index.html` dans un navigateur) : les 6 slides
+s'affichent sans serveur ni installation, la démo de la slide 3 comprise. Touches : `→` `←` changer de slide,
+`F` plein écran, `N` notes de l'orateur. Avec le CRM lancé, elles sont aussi sur http://127.0.0.1:8000.
+
 ## Démarrage rapide (5 minutes)
 
 ```bash
@@ -18,9 +24,16 @@ python -m venv .venv
 source .venv/bin/activate            # Windows : .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env                 # Windows : copy .env.example .env
-python -m pytest                     # 130 tests verts, sans réseau
+python -m pytest                     # 134 tests verts, sans réseau
 python -m demo.comparaison           # le tableau « sans MCP / avec MCP » -> RAPPORT_DEMO.md
 ```
+
+## Le pitch (oral, 8 minutes)
+
+`uvicorn crm.app:app --port 8000` puis http://127.0.0.1:8000 : les 11 diapositives s'affichent directement, sans clé
+(`CRM_MODE_PRESENTATION=1` dans `.env`, réservé au navigateur de la machine). Deux démos en direct branchées sur le vrai MCP :
+une facture piégée (injection de prompt + RIB) et un agent IA qui achète un casque (3 vendeurs vérifiés). Script complet et
+questions de cours : `PITCH.md`. Touches : `→` `←` `F` (plein écran) `N` (notes).
 
 ## La preuve d'utilité : `python -m demo.comparaison`
 
@@ -30,6 +43,15 @@ puis par l'outil `traiter_factures_crm`. Résultat (voir `RAPPORT_DEMO.md`) :
 - **Sans MCP** : 16 factures payées, dont 112 680 € frauduleux ou anormaux.
 - **Avec MCP** : 9 bloquées, 5 envoyées à un humain, 2 vérifiées (les 2 seules saines) → 16/16 conformes.
 - Le MCP tente de payer avec sa clé → **403**. Un humain tente de payer une facture bloquée → **409**.
+
+## Tester le MCP (connexion + appels d'outils)
+
+- **Dans le terminal** : `python scripts/tester_mcp.py` (menu : choisir un outil, saisir ses paramètres) ou
+  `python scripts/tester_mcp.py --demo` (3 appels : fournisseur sain, gel des avoirs, SIRET faux). On voit la poignée de
+  main `initialize`, `tools/list` et chaque `tools/call` avec la réponse du serveur.
+- **MCP Inspector officiel** (interface web, Node.js requis) : `scripts\inspector.cmd` → **Connect** → **Tools** →
+  **List Tools** → choisir un outil → **Run Tool**.
+- `traiter_factures_crm` a besoin du CRM lancé (`uvicorn crm.app:app --port 8000`).
 
 ## Utiliser le MCP dans Cursor
 

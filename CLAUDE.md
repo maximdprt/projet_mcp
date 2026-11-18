@@ -9,7 +9,7 @@ dans le code et renvoie un statut. Un CRM de test (FastAPI + SQLite) contient 16
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows : .venv\Scripts\activate
 pip install -r requirements.txt && cp .env.example .env
-python -m pytest -v                 # 130 tests, hors ligne
+python -m pytest -v                 # 134 tests, hors ligne
 python -m demo.comparaison          # démo sans/avec MCP -> RAPPORT_DEMO.md
 uvicorn crm.app:app --port 8000     # SaaS : dépôt de factures + analyse MCP http://127.0.0.1:8000, API /docs
 python -m verif_fournisseur.server  # serveur MCP (stdio) ; normalement lancé par Cursor / Claude
@@ -40,7 +40,8 @@ crm/extraction.py                  lecture d'une facture déposée (PDF texte, T
 crm/ingestion.py                   enregistrement, rattachement au référentiel (nom puis SIRET), lien jeu de test
 crm/analyse.py                     le CRM appelle le serveur MCP (stdio, outil traiter_factures_crm)
 crm/pdf_factures.py                PDF fictifs du jeu de test (sans dépendance)
-crm/interface/                     SaaS web (HTML/CSS/JS) : dépôt, scène d'analyse, décision ; aucune clé, aucune règle
+crm/interface/                     SaaS web (HTML/CSS/JS) : pitch (11 diapos, PITCH.md), dépôt, scène d'analyse, décision ;
+                                   aucune clé, aucune règle. CRM_MODE_PRESENTATION=1 : page locale sans clé (en-tête X-Presentation)
 crm/donnees_demo.py                fournisseurs, historique, 16 SCÉNARIOS (facture, piège, attendu)
 demo/harnais.py                    branche MCP + API simulées + CRM dans un seul processus (tests, démo)
 ```

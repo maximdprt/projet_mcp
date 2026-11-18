@@ -211,7 +211,7 @@ def test_la_cle_du_mcp_ne_peut_ni_deposer_ni_creer_ni_lancer_d_analyse():
 
 def test_referentiel_des_fournisseurs():
     r = admin("GET", "/api/fournisseurs").json()
-    assert len(r) == 6 and {"iban_reference", "telephone_reference", "nombre_factures"} <= set(r[0])
+    assert len(r) == 7 and {"iban_reference", "telephone_reference", "nombre_factures"} <= set(r[0])
     mercier = next(f for f in r if f["nom"] == "ATELIER MERCIER")
     assert mercier["factures_payees"] == 6
     assert requete("GET", "/api/fournisseurs").status_code == 401
@@ -231,3 +231,56 @@ def test_reinitialiser_sans_jeu_de_test_vide_la_boite():
     assert admin("POST", "/api/demo/reinitialiser", params={"jeu_de_test": "false"}).json()["jeu_de_test"] is False
     sources = {f["source"] for f in admin("GET", "/api/factures").json()}
     assert sources == {"historique"}
+
+
+# ------------------------------------------------------------------ mode présentation (oral) et démo « agent d'achat »
+
+def requete_locale(methode, chemin, hote="127.0.0.1", entetes=None):
+    async def _run():
+        transport = httpx.ASGITransport(app=crm_app.app, client=(hote, 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://crm", headers=entetes or {}) as c:
+            return await c.request(methode, chemin)
+    return asyncio.run(_run())
+
+
+def test_mode_presentation_navigateur_local_sans_cle(monkeypatch):
+    monkeypatch.setattr(crm_app, "MODE_PRESENTATION", True)
+    r = requete_locale("GET", "/api/session", entetes={"X-Presentation": "1"})
+    assert r.status_code == 200 and r.json()["role"] == "admin" and r.json()["presentation"] is True
+
+
+def test_mode_presentation_refuse_sans_en_tete_hors_machine_ou_desactive(monkeypatch):
+    monkeypatch.setattr(crm_app, "MODE_PRESENTATION", True)
+    assert requete_locale("GET", "/api/session").status_code == 401                        # pas d'en-tête : anti-CSRF
+    assert requete_locale("GET", "/api/session", hote="192.168.1.20",
+                          entetes={"X-Presentation": "1"}).status_code == 401              # autre machine
+    monkeypatch.setattr(crm_app, "MODE_PRESENTATION", False)
+    assert requete_locale("GET", "/api/session", entetes={"X-Presentation": "1"}).status_code == 401
+
+
+def test_mode_presentation_ne_donne_aucun_droit_a_la_cle_du_mcp(monkeypatch):
+    monkeypatch.setattr(crm_app, "MODE_PRESENTATION", True)
+    entetes = {"X-Presentation": "1", "X-API-Key": crm_app.CLE_MCP}
+    assert requete_locale("POST", "/api/demo/agent-achat", entetes=entetes).status_code == 403
+
+
+def test_agent_d_achat_chaque_vendeur_est_verifie_par_le_mcp():
+    from crm.donnees_demo import OFFRES_AGENT
+    r = admin("POST", "/api/demo/agent-achat")
+    assert r.status_code == 202
+    offres = r.json()["offres"]
+    assert len(offres) == len(OFFRES_AGENT) == 3
+    verdicts = {}
+    for o in offres:
+        f = admin("GET", f"/api/factures/{o['facture_id']}").json()
+        assert f["statut"] == o["statut_attendu"], (o["boutique"], f["derniere_verification"])
+        verdicts[o["boutique"]] = {a["code"] for a in f["derniere_verification"]["alertes"]}
+    assert "SIRET_INVALIDE" in verdicts["audio-premium-store.com"]           # contrefaçon probable : bloquée
+    assert "ENTREPRISE_RECENTE" in verdicts["hightech-outlet.shop"]           # boutique éphémère : humain
+    assert not verdicts["son-et-image.fr"] - {"DOUBLE_VALIDATION"}            # revendeur agréé : aucune alerte
+    # seul le revendeur vérifié peut être payé, et uniquement par un humain
+    sain = next(o for o in offres if o["statut_attendu"] == "verifiee")
+    faux = next(o for o in offres if o["statut_attendu"] == "bloquee")
+    assert admin("POST", f"/api/factures/{faux['facture_id']}/paiement").status_code == 409
+    assert requete("POST", f"/api/factures/{sain['facture_id']}/paiement", crm_app.CLE_MCP).status_code == 403
+    assert admin("POST", f"/api/factures/{sain['facture_id']}/paiement").status_code == 200
