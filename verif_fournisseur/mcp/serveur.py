@@ -5,8 +5,9 @@ Trois outils, un par intention :
   verifier_fournisseur   -> « j'ai une facture devant moi » (6 API + calculs locaux)
   traiter_factures_crm   -> « vérifie les factures du CRM » (lit, vérifie, enregistre ; ne paie jamais)
 
-Ce fichier ne contient que la déclaration des outils. Les règles sont dans regles.py et verifications.py.
-Lancement : python -m verif_fournisseur.server   (transport stdio)
+Ce fichier ne contient que la déclaration des outils : leur code est dans verif_fournisseur/outils/ (un fichier
+par outil) et toutes les règles dans verif_fournisseur/regles.py.
+Lancement : python -m verif_fournisseur.mcp.serveur   (transport stdio ; LANCER_MCP_INSPECTOR.cmd le fait)
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
-from . import crm_client, sources, verifications
+from .. import crm_client, outils, sources
 
 INSTRUCTIONS = """\
 Tu aides une entreprise à vérifier ses fournisseurs AVANT de payer une facture.
@@ -42,7 +43,7 @@ async def rechercher_entreprise(nom: str, code_postal: str | None = None) -> dic
     """Cherche des entreprises françaises par nom (code postal facultatif). Au plus 5 candidats, sans aucune
     information sur les dirigeants. Ne choisit jamais : pour vérifier, il faut le SIRET imprimé sur la facture."""
     async with sources.creer_client() as client:
-        return await verifications.rechercher_entreprise(client, nom, code_postal)
+        return await outils.rechercher_entreprise(client, nom, code_postal)
 
 
 @mcp.tool(annotations=LECTURE, structured_output=True)
@@ -56,7 +57,7 @@ async def verifier_fournisseur(siret: str, nom_sur_facture: str, iban: str | Non
     Frankfurter (montant en euros). Renvoie un statut décidé par le serveur : BLOQUER_LE_PAIEMENT,
     IMPOSSIBLE_DE_VERIFIER, VERIFICATION_HUMAINE_REQUISE ou AUCUNE_ALERTE_DETECTEE, et la liste des contrôles."""
     async with sources.creer_client() as client:
-        return await verifications.verifier_fournisseur(client, siret, nom_sur_facture, iban, tva, adresse,
+        return await outils.verifier_fournisseur(client, siret, nom_sur_facture, iban, tva, adresse,
                                                         montant, devise)
 
 
@@ -67,7 +68,7 @@ async def traiter_factures_crm(facture_id: str | None = None) -> dict[str, Any]:
     de numéro, montant anormal par rapport à l'historique. Seule écriture : le résultat et une trace dans le
     journal du CRM. Ne paie jamais, ne modifie jamais un IBAN ni un fournisseur."""
     async with sources.creer_client() as ext, crm_client.creer_client_crm() as crm:
-        return await verifications.traiter_factures_crm(ext, crm, facture_id)
+        return await outils.traiter_factures_crm(ext, crm, facture_id)
 
 
 def main() -> None:

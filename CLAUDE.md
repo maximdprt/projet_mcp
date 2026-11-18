@@ -9,40 +9,37 @@ dans le code et renvoie un statut. Un CRM de test (FastAPI + SQLite) contient 16
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows : .venv\Scripts\activate
 pip install -r requirements.txt && cp .env.example .env
-python -m pytest -v                 # 130 tests, hors ligne
-python -m demo.comparaison          # démo sans/avec MCP -> RAPPORT_DEMO.md
-uvicorn crm.app:app --port 8000     # SaaS : dépôt de factures + analyse MCP http://127.0.0.1:8000, API /docs
-python -m verif_fournisseur.server  # serveur MCP (stdio) ; normalement lancé par Cursor / Claude
-python scripts/test_reel.py         # contrôle des 6 vraies API (internet)
+python -m pytest -v                 # 75 tests, hors ligne
+uvicorn crm.app:app --port 8000     # CRM de démo (repart des 16 factures à chaque démarrage), API /docs
+LANCER_MCP_INSPECTOR.cmd            # CRM + MCP Inspector ; OUVRIR_LES_SLIDES.cmd : la présentation
+python -m verif_fournisseur.mcp.serveur  # serveur MCP (stdio) ; lancé par l'Inspector, Claude ou Cursor
 ```
 
 ## Architecture
 
 ```
-IA (Cursor, Claude Desktop…)
+IA (Claude, Cursor, MCP Inspector…)
   │  MCP stdio — 3 outils
   ▼
-verif_fournisseur/server.py        déclaration des outils + instructions à l'IA (aucune règle ici)
-  └─ verifications.py              validation des entrées, enchaînement des 8 contrôles, conclusion
-       ├─ regles.py                TOUTES les règles : statuts, seuils, noms, BODACC, règles CRM
-       ├─ identifiants.py          calculs locaux : Luhn SIREN/SIRET, clé TVA, IBAN modulo 97
-       ├─ sources/                 1 module = 1 API, liste blanche des champs, gestion des pannes
-       │    entreprises.py  Recherche d'entreprises (DINUM)     data.gouv.fr
-       │    bodacc.py       BODACC (DILA)                       data.gouv.fr
-       │    adresse.py      Géoplateforme géocodage (IGN)       data.gouv.fr
-       │    gels.py         Gels des avoirs (DG Trésor)         data.gouv.fr
-       │    tva.py          VATComply (relais VIES)             public-apis
-       │    change.py       Frankfurter (taux BCE)              public-apis
-       ├─ crm_client.py            appels au CRM avec la clé CRM_CLE_MCP (lue dans .env)
-       └─ simulation.py            les 6 API simulées (VERIF_MODE=simulation)
-crm/app.py                         CRM : 2 clés (mcp / admin), refuse de payer ce qui n'est pas « verifiee »
-crm/extraction.py                  lecture d'une facture déposée (PDF texte, TXT, JSON) : regex, sans IA
-crm/ingestion.py                   enregistrement, rattachement au référentiel (nom puis SIRET), lien jeu de test
-crm/analyse.py                     le CRM appelle le serveur MCP (stdio, outil traiter_factures_crm)
-crm/pdf_factures.py                PDF fictifs du jeu de test (sans dépendance)
-crm/interface/                     SaaS web (HTML/CSS/JS) : dépôt, scène d'analyse, décision ; aucune clé, aucune règle
-crm/donnees_demo.py                fournisseurs, historique, 16 SCÉNARIOS (facture, piège, attendu)
-demo/harnais.py                    branche MCP + API simulées + CRM dans un seul processus (tests, démo)
+verif_fournisseur/
+  mcp/serveur.py                 LE SERVEUR MCP : déclare les 3 outils + instructions à l'IA (aucune règle ici)
+  outils/                        LE CODE DES 3 OUTILS, un fichier chacun
+    rechercher_entreprise.py       outil 1 : « je n'ai qu'un nom » (5 candidats max, lecture seule)
+    verifier_fournisseur.py        outil 2 : 8 contrôles dans un ordre fixe (lecture seule)
+    traiter_factures_crm.py        outil 3 : lit le CRM, 8 contrôles + référentiel, écrit le verdict
+    commun.py                      refus motivé, rapport de contrôles, empreinte
+  regles.py                      TOUTES les règles : statuts, seuils, noms, BODACC, règles CRM
+  identifiants.py                calculs locaux : Luhn SIREN/SIRET, clé TVA, IBAN modulo 97
+  sources/                       1 module = 1 API, liste blanche des champs, gestion des pannes
+    entreprises.py · bodacc.py · adresse.py · gels.py · tva.py · change.py
+    simulation.py                  les 6 API simulées (VERIF_MODE=simulation)
+  crm_client.py                  appels au CRM avec la clé CRM_CLE_MCP (lue dans .env)
+  config.py                      seuils et réglages (lus dans .env)
+crm/                             CRM de démo (FastAPI + SQLite) : 2 clés, refuse de payer ce qui n'est pas « verifiee »
+  app.py · db.py · donnees_demo.py (16 SCÉNARIOS : facture, piège, attendu)
+tests/                           75 tests ; harnais.py branche MCP + API simulées + CRM dans un seul processus
+diapos/                          les 6 slides de l'oral (statiques, hors ligne)
+docs/                            fiche de confiance, rapport de démo, dossier Word
 ```
 
 ### Les 3 outils
@@ -66,7 +63,7 @@ Sources **secondaires** (panne ⇒ alerte `A_VERIFIER`) : VIES, géocodage.
 Priorité : un BLOQUANT l'emporte sur tout ; puis panne ; puis A_VERIFIER ; sinon OK.
 
 ## Invariants — ne jamais casser
-1. Les règles sont dans le code (`regles.py`, `verifications.py`), jamais dans le prompt ou les instructions.
+1. Les règles sont dans le code (`regles.py`, `outils/`), jamais dans le prompt ou les instructions.
 2. Fail-closed : une panne ne produit jamais `AUCUNE_ALERTE_DETECTEE`.
 3. Aucun outil ne paie, n'envoie, ni ne modifie un IBAN/fournisseur. La clé MCP du CRM n'en a pas le droit (403).
    Les deux clés du CRM doivent être différentes : sinon le CRM refuse de démarrer.
@@ -80,8 +77,8 @@ Priorité : un BLOQUANT l'emporte sur tout ; puis panne ; puis A_VERIFIER ; sino
 ## Ajouter une API
 1. `verif_fournisseur/sources/ma_source.py` : `SOURCE`, `URL`, une fonction async qui utilise `http.get_json`
    et renvoie un dict filtré par liste blanche ; lever `SourceIndisponible` si le format est inattendu.
-2. Simuler l'hôte dans `simulation.gestionnaire`.
-3. Ajouter le contrôle dans `verifier_fournisseur` (essentiel ou secondaire) et ses alertes dans `regles.py`.
+2. Simuler l'hôte dans `sources/simulation.py` (`gestionnaire`).
+3. Ajouter le contrôle dans `outils/verifier_fournisseur.py` (essentiel ou secondaire) et ses alertes dans `regles.py`.
 4. Tests : cas OK, cas d'alerte, panne. Mettre à jour la fiche de confiance.
 
 ## Conventions

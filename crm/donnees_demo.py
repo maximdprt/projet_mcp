@@ -5,7 +5,7 @@ avec le résultat attendu du MCP. Les tests et la démo « sans MCP / avec MCP �
 Toutes les entreprises sont fictives (sauf la DINUM) et n'existent qu'en mode simulation.
 """
 
-from verif_fournisseur.simulation import iban_fr
+from verif_fournisseur.sources.simulation import iban_fr
 
 IBAN_MERCIER = iban_fr("30004000031234567890143")
 IBAN_PIRATE_FR = iban_fr("16958000016543210987612")   # IBAN français valide, mais pas celui du fournisseur

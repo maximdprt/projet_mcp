@@ -1,40 +1,31 @@
-"""Vérif Fournisseur — SaaS de démonstration (FastAPI + SQLite) : on dépose une facture, le MCP l'analyse.
+"""CRM de démonstration (FastAPI + SQLite) : la base de factures que lit l'outil MCP `traiter_factures_crm`.
 
-Lancement : uvicorn crm.app:app --port 8000      Interface : http://127.0.0.1:8000
+Lancement : uvicorn crm.app:app --port 8000      (ou double-clic sur LANCER_MCP_INSPECTOR.cmd)
 Documentation interactive de l'API : http://127.0.0.1:8000/docs
+
+À chaque démarrage, le CRM repart avec le jeu de test : 6 fournisseurs, un historique payé et 16 factures « recue »
+(F01 à F16), chacune avec un piège de la fraude fournisseur (voir crm/donnees_demo.py).
 
 Deux clés, deux droits (principe du moindre privilège) :
 - CRM_CLE_MCP   : lire, et enregistrer le résultat d'une vérification. Rien d'autre.
-- CRM_CLE_ADMIN : en plus, validation humaine, paiement, changement d'IBAN, réinitialisation.
-Le CRM applique lui-même ses règles : il refuse de payer une facture qui n'est pas « verifiee ».
-
-Parcours : dépôt d'un fichier (extraction.py) -> enregistrement et rattachement au référentiel (ingestion.py)
--> analyse : le CRM appelle le serveur MCP par le protocole MCP (analyse.py) ; c'est le MCP qui lit la facture,
-interroge les sources, applique les règles et écrit le verdict -> décision humaine (validation, paiement simulé).
-
-L'interface web (crm/interface/) ne contient aucune clé : elle la demande à l'utilisateur, la garde dans
-l'onglet (sessionStorage) et n'appelle que l'API ci-dessous. Elle ne décide rien : les actions possibles
-sont calculées ici (`actions_possibles`) et le serveur revérifie tout à chaque appel.
+- CRM_CLE_ADMIN : en plus, validation humaine, paiement (simulé), changement d'IBAN, réinitialisation.
+Le CRM applique lui-même ses règles : il refuse de payer une facture qui n'est pas « verifiee » (HTTP 409),
+et la clé du MCP ne peut ni valider ni payer (HTTP 403).
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import time
 from contextlib import asynccontextmanager
 from decimal import ROUND_HALF_UP, Decimal
-from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from . import analyse, db, extraction, ingestion
+from . import db
 
 load_dotenv()
 CLE_MCP = os.getenv("CRM_CLE_MCP", "cle-mcp-demo-a-changer").strip()
@@ -52,8 +43,6 @@ def verifier_cles(cle_mcp: str, cle_admin: str) -> None:
 
 verifier_cles(CLE_MCP, CLE_ADMIN)
 
-DOSSIER_INTERFACE = Path(__file__).with_name("interface")
-
 # Règles du CRM lui-même (pas des règles de vérification : celles-ci restent dans verif_fournisseur/regles.py)
 STATUT_PAYABLE = "verifiee"              # seul statut qui autorise le paiement
 STATUT_VALIDABLE = "a_verifier_humain"   # seul statut qu'un humain peut valider
@@ -61,15 +50,19 @@ STATUTS_FIGES = ("payee",)               # plus aucune modification
 STATUTS_RETENUS = ("bloquee", "a_verifier_humain", "impossible_de_verifier")   # argent retenu (tableau de bord)
 
 
-
 @asynccontextmanager
 async def _cycle_de_vie(_app):
-    if not os.path.exists(db.CHEMIN) or not db.schema_a_jour():
-        db.initialiser(jeu_de_test=False)        # première exécution : boîte de réception vide
+    db.initialiser(jeu_de_test=True)      # chaque démarrage repart des 16 factures du jeu de test
     yield
 
 
-app = FastAPI(title="CRM de test — Vérif Fournisseur", version="1.0.0", lifespan=_cycle_de_vie)
+app = FastAPI(title="CRM de test — Vérif Fournisseur", version="2.0.0", lifespan=_cycle_de_vie)
+
+
+@app.get("/", include_in_schema=False)
+def accueil() -> dict:
+    return {"crm": "Vérif Fournisseur (démo)", "documentation": "/docs",
+            "usage": "Ce CRM est lu par l'outil MCP traiter_factures_crm. Testez le MCP avec le MCP Inspector."}
 
 
 def role(x_api_key: str | None = Header(default=None)) -> str:
@@ -100,7 +93,7 @@ def _facture(c, facture_id: str) -> dict:
 
 
 def _avec_actions(f: dict) -> dict:
-    """Ce qu'un humain peut faire sur la facture. Calculé ici pour que l'interface n'ait aucune règle à elle."""
+    """Ce qu'un humain peut faire sur la facture. Calculé par le CRM, jamais par le client."""
     return {**f, "actions_possibles": {"payer": f["statut"] == STATUT_PAYABLE,
                                        "valider": f["statut"] == STATUT_VALIDABLE}}
 
@@ -109,7 +102,7 @@ def _avec_actions(f: dict) -> dict:
 
 @app.get("/api/session")
 def session(r: str = Depends(role)) -> dict:
-    """Rôle associé à la clé fournie : l'interface s'en sert pour vérifier la clé saisie."""
+    """Rôle associé à la clé fournie (admin ou mcp)."""
     return {"role": r, "peut_agir": r == "admin"}
 
 
@@ -240,108 +233,6 @@ def enregistrer_verification(facture_id: str, v: Verification, qui: str = Depend
     return {"enregistre": True, "facture_id": facture_id, "statut": v.statut, "journal_id": n}
 
 
-# ------------------------------------------------------------------ dépôt d'une facture et analyse par le MCP
-
-@app.post("/api/factures/depot")
-async def deposer(fichier: UploadFile = File(...), _: str = Depends(admin)) -> dict:
-    """Lit un fichier déposé (PDF, TXT, JSON) et renvoie les champs extraits. Rien n'est encore enregistré :
-    l'utilisateur relit et corrige avant de créer la facture."""
-    contenu = await fichier.read(extraction.TAILLE_MAX + 1)
-    if len(contenu) > extraction.TAILLE_MAX:
-        raise HTTPException(413, "Fichier trop volumineux (5 Mo maximum).")
-    nom = (fichier.filename or "facture").replace("\\", "/").split("/")[-1][:120]
-    try:
-        resultat = extraction.extraire(nom, contenu)
-    except extraction.FichierRefuse as e:
-        raise HTTPException(422, str(e)) from None
-    return {**resultat, "fichier": {"nom": nom, "taille": len(contenu), "empreinte": hashlib.sha256(contenu).hexdigest()}}
-
-
-class NouvelleFacture(BaseModel):
-    numero: str = Field(min_length=1, max_length=40)
-    nom_emetteur: str = Field(min_length=1, max_length=120)
-    siret: str | None = Field(default=None, max_length=20)
-    tva: str | None = Field(default=None, max_length=20)
-    iban: str | None = Field(default=None, max_length=40)
-    adresse_emetteur: str | None = Field(default=None, max_length=200)
-    montant: str = Field(min_length=1, max_length=20)
-    devise: str = Field(default="EUR", pattern=r"^[A-Z]{3}$")
-    date_emission: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    objet: str | None = Field(default=None, max_length=500)
-    nom_fichier: str | None = Field(default=None, max_length=120)
-    empreinte_fichier: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-
-
-def _sans_espaces(valeur: str | None) -> str | None:
-    return (valeur or "").replace(" ", "").upper() or None
-
-
-@app.post("/api/factures", status_code=201)
-def creer_facture(n: NouvelleFacture, qui: str = Depends(admin)) -> dict:
-    """Enregistre une facture déposée (statut « recue ») et la rattache au référentiel. Aucune vérification ici."""
-    montant = extraction.normaliser_montant(n.montant)
-    if montant is None:
-        raise HTTPException(422, "Montant illisible.")
-    with db.connexion() as c:
-        fournisseur_id, mode = ingestion.rattacher(c, n.nom_emetteur, n.siret)
-        facture_id = ingestion.nouvel_identifiant(c)
-        scenario = ingestion.scenario_correspondant(n.numero.strip(), n.nom_emetteur)
-        fichier = {"nom": n.nom_fichier, "empreinte": n.empreinte_fichier} if n.nom_fichier else None
-        c.execute("INSERT INTO factures (id, numero, fournisseur_id, nom_emetteur, siret, tva, iban, adresse_emetteur, "
-                  "montant, devise, date_emission, objet, statut, source, scenario, fichier) "
-                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'recue','depot',?,?)",
-                  (facture_id, n.numero.strip(), fournisseur_id, n.nom_emetteur.strip(), _sans_espaces(n.siret),
-                   _sans_espaces(n.tva), _sans_espaces(n.iban), (n.adresse_emetteur or "").strip() or None, montant,
-                   n.devise, n.date_emission, (n.objet or "").strip() or None, scenario,
-                   json.dumps(fichier, ensure_ascii=False) if fichier else None))
-        _journal(c, facture_id, qui, "depot", "recue",
-                 {"fichier": n.nom_fichier, "empreinte_fichier": n.empreinte_fichier, "fournisseur_id": fournisseur_id,
-                  "rattachement": mode, "scenario": scenario})
-        return _avec_actions(_facture(c, facture_id))
-
-
-async def _faire_analyser(arguments: dict, facture_id: str | None) -> None:
-    """Tâche de fond : appel de l'outil MCP, puis trace de la réponse dans le journal."""
-    debut = time.monotonic()
-    try:
-        r = await analyse.executeur(arguments)
-    except Exception as e:  # MCP introuvable, délai dépassé, plantage : la facture reste « recue »
-        r = {"erreur": "ECHEC_APPEL_MCP", "raison": type(e).__name__}
-    detail = {"outil": analyse.OUTIL, "duree_ms": int((time.monotonic() - debut) * 1000),
-              "resultat": r.get("statut") or r.get("erreur") or ("REFUS" if r.get("refus") else "OK"),
-              "nombre_traitees": r.get("nombre_traitees", 1 if r.get("statut") else 0)}
-    if r.get("erreur") or r.get("refus"):
-        detail["raison"] = str(r.get("raison") or r.get("motif") or "")[:200]
-    with db.connexion() as c:
-        _journal(c, facture_id, "crm", "reponse_mcp", r.get("statut_crm"), detail)
-
-
-@app.post("/api/factures/{facture_id}/analyse", status_code=202)
-def analyser_facture(facture_id: str, taches: BackgroundTasks, qui: str = Depends(admin)) -> dict:
-    """Fait analyser la facture par le serveur MCP (outil traiter_factures_crm). Réponse immédiate ; le verdict
-    arrive dans le journal (action « verification », écrite par le MCP lui-même)."""
-    arguments = {"facture_id": facture_id}
-    with db.connexion() as c:
-        f = _facture(c, facture_id)
-        if f["statut"] in STATUTS_FIGES:
-            raise HTTPException(409, "Facture déjà payée : rien à analyser.")
-        _journal(c, facture_id, qui, "analyse_demandee", None,
-                 {"outil": analyse.OUTIL, "arguments": arguments, "transport": "stdio (protocole MCP)"})
-    taches.add_task(_faire_analyser, arguments, facture_id)
-    return {"analyse": "lancee", "facture_id": facture_id, "outil": analyse.OUTIL, "arguments": arguments}
-
-
-@app.post("/api/analyses", status_code=202)
-def analyser_tout(taches: BackgroundTasks, qui: str = Depends(admin)) -> dict:
-    """Fait analyser par le MCP toutes les factures « recue » (25 au plus par appel, limite de l'outil)."""
-    with db.connexion() as c:
-        n = c.execute("SELECT COUNT(*) FROM factures WHERE statut='recue'").fetchone()[0]
-        _journal(c, None, qui, "analyse_demandee", None,
-                 {"outil": analyse.OUTIL, "arguments": {}, "transport": "stdio (protocole MCP)", "factures": n})
-    taches.add_task(_faire_analyser, {}, None)
-    return {"analyse": "lancee", "outil": analyse.OUTIL, "arguments": {}, "factures_recues": n}
-
-
 # ------------------------------------------------------------------ actions humaines (clé admin)
 
 class ValidationHumaine(BaseModel):
@@ -390,54 +281,3 @@ def reinitialiser(jeu_de_test: bool = True, _: str = Depends(admin)) -> dict:
     """Remet la démo à zéro. jeu_de_test=false : boîte de réception vide (on dépose les factures soi-même)."""
     db.initialiser(jeu_de_test=jeu_de_test)
     return {"reinitialise": True, "jeu_de_test": jeu_de_test}
-
-
-# ------------------------------------------------------------------ factures d'exemple (fictives, publiques)
-
-def _exemple(exemple_id: str):
-    from .donnees_demo import SCENARIOS, TITRES_SCENARIOS
-    for f, piege, attendu, _codes in SCENARIOS:
-        if f["id"] == exemple_id:
-            return f, piege, attendu, TITRES_SCENARIOS.get(f["id"], f["id"])
-    raise HTTPException(404, "Exemple introuvable.")
-
-
-@app.get("/api/exemples")
-def exemples() -> list[dict]:
-    """Les 16 factures PDF du jeu de test, à télécharger ou à glisser dans la zone de dépôt. Données fictives."""
-    from .donnees_demo import SCENARIOS
-    sortie = []
-    for f, *_ in SCENARIOS:
-        _, piege, attendu, titre = _exemple(f["id"])
-        sortie.append({"id": f["id"], "titre": titre, "piege": piege, "statut_attendu": attendu,
-                       "nom_emetteur": f["nom_emetteur"], "numero": f["numero"], "montant": f["montant"],
-                       "devise": f["devise"], "url": f"/api/exemples/{f['id']}.pdf",
-                       "nom_fichier": f"facture-{f['numero']}.pdf"})
-    return sortie
-
-
-@app.get("/api/exemples/{exemple_id}.pdf")
-def exemple_pdf(exemple_id: str) -> Response:
-    from .pdf_factures import facture_pdf
-    f, *_ = _exemple(exemple_id)
-    return Response(facture_pdf(f), media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="facture-{f["numero"]}.pdf"',
-                             "X-Content-Type-Options": "nosniff"})
-
-
-# ------------------------------------------------------------------ interface web (aucune clé dedans)
-
-# La page n'exécute que ses propres fichiers et ne parle qu'à ce serveur : un texte piégé dans une facture
-# ne peut ni charger de script, ni envoyer la clé ailleurs.
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
-       "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-
-
-@app.get("/", include_in_schema=False)
-def interface() -> FileResponse:
-    return FileResponse(DOSSIER_INTERFACE / "index.html", media_type="text/html",
-                        headers={"Content-Security-Policy": CSP, "X-Content-Type-Options": "nosniff",
-                                 "Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
-
-
-app.mount("/interface", StaticFiles(directory=DOSSIER_INTERFACE), name="interface")

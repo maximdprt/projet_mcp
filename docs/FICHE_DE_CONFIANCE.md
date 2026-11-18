@@ -28,6 +28,6 @@
 | CRM ou API en panne → rien n'est écrit, la facture reste impayable | `test_crm_injoignable_*`, `test_api_externe_*` |
 | SaaS : facture déposée lue sans IA, verdict écrit par le MCP lui-même ; fichier refusé (> 5 Mo, type, illisible) ; échec du MCP → rien n'est conclu ; la clé du MCP ne dépose ni ne lance rien (403) ; page sans clé ni HTML interprété (CSP) | `test_crm_saas.py` (51), `test_crm_interface.py` (21) |
 
-**Preuve d'utilité** (`python -m demo.comparaison`) : sans MCP, 16 factures payées dont 112 680 € frauduleux ou anormaux. Avec MCP : 9 bloquées, 5 envoyées à un humain, et seules les 2 factures saines sont vérifiées (16/16 conformes).
+**Preuve d'utilité** (`docs/RAPPORT_DEMO.md`) : sans MCP, 16 factures payées dont 112 680 € frauduleux ou anormaux. Avec MCP : 9 bloquées, 5 envoyées à un humain, et seules les 2 factures saines sont vérifiées (16/16 conformes).
 
 **Limites assumées.** Le titulaire de l'IBAN n'est pas vérifiable : il faut contre-appeler au numéro du référentiel. Le BODACC peut avoir un délai de publication. Le registre des gels est mis en cache 6 h maximum. La comparaison des noms est une heuristique qui, en cas de doute, renvoie vers un humain. La démo tourne en mode simulation (entreprises fictives), et chaque rapport indique son mode.

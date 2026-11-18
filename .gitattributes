@@ -1,0 +1,2 @@
+# Les lanceurs Windows doivent garder des fins de ligne CRLF (sinon cmd.exe casse les goto)
+*.cmd text eol=crlf

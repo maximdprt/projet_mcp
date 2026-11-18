@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from verif_fournisseur import config
-from verif_fournisseur.simulation import gestionnaire
+from verif_fournisseur.sources.simulation import gestionnaire
 from verif_fournisseur.sources import entreprises, gels
 
 RE = "recherche-entreprises.api.gouv.fr"

@@ -14,7 +14,7 @@ from urllib.parse import parse_qs
 
 import httpx
 
-from .identifiants import cle_tva_fr
+from ..identifiants import cle_tva_fr
 
 
 def iban_fr(bban: str) -> str:
@@ -53,6 +53,11 @@ ENTREPRISES = {e["siren"]: e for e in [
                 "75002", "75102", "2015-01-12"),
     _entreprise("906789128", "90678912800012", "CABINET ROUSSEAU CONSEIL", "22 RUE SAINTE CATHERINE 33000 BORDEAUX",
                 "33000", "33063", "2010-11-03"),
+    # Exemple « agent IA qui achète un casque » : un revendeur établi, une boutique créée il y a 12 jours
+    _entreprise("907891238", "90789123800004", "SON ET IMAGE DISTRIBUTION",
+                "15 RUE DE SEVRES 92100 BOULOGNE-BILLANCOURT", "92100", "92012", "2009-04-06"),
+    _entreprise("908912348", "90891234800004", "HIGH TECH OUTLET", "27 RUE OBERKAMPF 75011 PARIS", "75011", "75111",
+                _il_y_a(12)),
 ]}
 
 
